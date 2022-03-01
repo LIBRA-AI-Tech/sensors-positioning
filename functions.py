@@ -117,8 +117,8 @@ def lsq_aux(angle_preds, anchor_info, theta = False, alt=False):
 
 
 
-def create_set(data, points_set, rooms = rooms, concrete_rooms = concrete_rooms, other_scenarios = other_scenarios, 
-               anchors = anchors, channels = channels, polarities = polarities):
+def create_set(data, points_set, rooms = None, concrete_rooms = None, other_scenarios = None, 
+               anchors = None, channels = None, polarities = None):
 
     """
     Input: Data and points for set that we want
@@ -145,7 +145,60 @@ def create_set(data, points_set, rooms = rooms, concrete_rooms = concrete_rooms,
 
 
 
-def decreasing_signal(df, scale_util = 5, mode = 'amplitude', rooms = rooms, anchors = anchors, channels = channels):
+def create_iq_images(data, augm = False, anchors = None, channels = None):
+    
+    '''
+    Preprocess input for CNN model
+    '''
+
+    chanls = []
+    powers = []
+
+    for channel in channels:    
+        iqs = []
+        for anchor in anchors:
+            if augm:
+                dt = data[anchor][channel]
+            else:
+                dt = iq_processing(data[anchor][channel]).iloc[:,-10:]
+            powers.append(dt['power'])
+            iqs.append(dt)
+        chanls.append(pd.concat(iqs, axis=1).values.reshape((-1, 4, 10)))
+
+    iq_images = np.concatenate(chanls, axis=1).reshape((-1, 3, 4, 10)).transpose(0,3,2,1)
+    powers = pd.concat(powers, axis=1)
+        
+    return iq_images, powers
+
+
+
+def create_set_cnn(data, points_set, rooms = None, concrete_rooms = None, other_scenarios = None, anchors = None, channels = None):
+
+    """
+    Input: Data and points for set that we want
+    Output: x -> (IQ Image (10x4x3 : IQs + RSSI x anchors x channels)), y
+    """
+
+    tmp = defaultdict(lambda: defaultdict(dict))
+    x = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    y = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    for room in rooms + concrete_rooms + other_scenarios:
+        for anchor in anchors:
+            for channel in channels:
+                util_data = defaultdict()
+                for polarity in polarities:
+                    util_data[polarity] = points_set[['point']].merge(data[room][anchor][channel][polarity], on='point')
+                h = util_data['H']
+                v = util_data['V']
+                tmp[room][anchor][channel] = h.where(h['relative_power']+h['reference_power'] > v['reference_power']+v['relative_power'], v)
+            y[room][anchor] = util_data['H'][['true_phi', 'true_theta']]
+        x[room]['iq_image'], x[room]['powers'] = create_iq_images(tmp[room], anchors = anchors, channels = channels)
+    
+    return x,y
+
+
+    
+def decreasing_signal(df, scale_util = 5, mode = 'amplitude', rooms = None, anchors = None, channels = None):
 
     """
     Input: Training dictionary
@@ -214,8 +267,8 @@ def decreasing_signal(df, scale_util = 5, mode = 'amplitude', rooms = rooms, anc
 
 
 
-def make_predictions(df_x, df_y, model, rooms = rooms, concrete_rooms = concrete_rooms, test_points = test_points,
-                     other_scenarios = other_scenarios, anchors = anchors, anchor_data = anchor_data):
+def make_predictions(df_x, df_y, model, rooms = None, concrete_rooms = None, test_points = None,
+                     other_scenarios = None, anchors = None, anchor_data = None, cnn = False):
 
     """
     Input: x, y
@@ -225,7 +278,10 @@ def make_predictions(df_x, df_y, model, rooms = rooms, concrete_rooms = concrete
     angle_maes = defaultdict(lambda: (np.empty((2,4,10))))
     pos_maes = np.zeros((4,10))
 
-    y_test = pd.concat([df_y['testbench_01'][anchor]['37'] for anchor in anchors], axis=1)
+    if cnn:
+        y_test = pd.concat([df_y['testbench_01'][anchor] for anchor in anchors], axis=1)
+    else:
+        y_test = pd.concat([df_y['testbench_01'][anchor]['37'] for anchor in anchors], axis=1)
 
     angle_preds = defaultdict(dict)
     pos_angle_preds = defaultdict(dict)
@@ -251,6 +307,96 @@ def make_predictions(df_x, df_y, model, rooms = rooms, concrete_rooms = concrete
                    }
     
     return predictions, true_pos
+
+
+
+def posHeatmapXY(maes, pdda_maes = None, figsize=(15,7), scenarios = False):
+
+    '''
+    Plots a heatmap given the mean euclidean distance errors of the model.
+    Input:  A (3,7) numpy array containing the mean euclidean distance errors of the model trained and tested in different room combinations
+    Output: Prints the heatmap
+    '''
+    
+    training_room_names = ['No Furniture', 'Low Furniture', 'Mid Furniture', 'High Furniture']
+    testing_room_names = ['No Furniture', 'Low Furniture', 'Mid Furniture', 'High Furniture']
+    testing_room_names += ['Low Furniture\nConcrete', 'Mid Furniture\nConcrete', 'High Furniture\nConcrete']
+
+    if scenarios:
+        testing_room_names += ['Rotated\nAnchors', 'Translated\nAnchors']
+
+    fig, ax = plt.subplots(2,1, sharex=True, figsize=figsize, gridspec_kw={'height_ratios': [1,4]})
+    cbar_ax = fig.add_axes([.91, .12, .03, .75])
+
+    euclid_pdda = pd.DataFrame(pdda_maes, testing_room_names)
+    euclid_pdda.rename(columns = {0: ''}, inplace = True)
+    euclid = pd.DataFrame(maes, training_room_names, testing_room_names)
+
+    vmax = np.max(euclid_pdda)
+    vmin = np.min(euclid.values)
+    
+    sn.heatmap(euclid_pdda.T, annot=True, annot_kws={"size": 20}, cmap="YlGnBu", cbar_ax = cbar_ax, norm=colors.LogNorm(vmin, vmax), ax=ax[0])
+    sn.heatmap(euclid, annot=True, annot_kws={"size": 20}, cbar=False, vmax = vmax, vmin = vmin, cmap="YlGnBu", cbar_ax = None, norm=colors.LogNorm(vmin, vmax), ax=ax[1])
+
+    ax[0].set_ylabel('PDDA', rotation=0, ha='right')
+    sn.set(font_scale=1.2)
+    
+    fig.text(0.52, -0.1, 'Testing Room', ha='center')
+    fig.text(0, 0.4, 'Training Room', va='center', rotation='vertical')
+
+    cbar_ax.set_ylabel('MEDE (m)', fontsize=14)
+
+    ax[1].set_yticklabels(ax[1].get_yticklabels(), rotation=0) 
+    ax[1].set_xticklabels(ax[1].get_xticklabels(), rotation=45, ha='center') 
+    
+    plt.show()
+
+
+
+def addFurniture(ax, room, anchors=[1,2,3,4]):
+    a = np.array([1,1,1,1,1,1])
+    a_low = 0.5
+    if room in ['testbench_01_furniture_mid', 'testbench_01_furniture_mid_concrete']:
+        a[1] = a[3] = a_low
+    if room in ['testbench_01_furniture_low', 'testbench_01_furniture_low_concrete']:
+        a[2] = a[0] = a_low
+    if room in ['testbench_01', 'testbench_01_scenario2', 'testbench_01_scenario3']:
+        a = 6*[a_low]
+    furniture = [plt.Rectangle((44.+1.9, 43.1+0.2), 0.5, 1, fc='orange', ec='black', lw=2, alpha=a[0]),
+                 plt.Rectangle((44.+4.45, 43.1+1), 0.5, 1, fc='orange', ec='black', lw=2, alpha=a[1]),
+                 plt.Rectangle((44.+6.4, 43.1+2.6), 0.5, 1, fc='orange', ec='black', lw=2, alpha=a[2]),
+                 plt.Rectangle((44.+1.7, 43.1+4.1), 0.5, 1, fc='orange', ec='black', lw=2, alpha=a[3]),
+                 plt.Rectangle((44.+4.2, 43.1+3.4), 0.5, 1, fc='orange', ec='black', lw=2, alpha=a[4]),
+                 plt.Rectangle((44.+5.4, 43.1+5.15), 0.5, 1, fc='orange', ec='black', lw=2, alpha=a[5]),]
+    
+    anchrs = [plt.Circle((57.9, 43.3), 0.2, fc='firebrick', ec='black', lw=2),
+               plt.Circle((57.9, 50.0), 0.2, fc='firebrick', ec='black', lw=2),
+               plt.Circle((44.3, 50.0), 0.2, fc='firebrick', ec='black', lw=2),
+               plt.Circle((44.3, 43.3), 0.2, fc='firebrick', ec='black', lw=2)]
+
+    for anchor in anchors:
+        ax.add_patch(anchrs[anchor-1])
+    for item in furniture:
+        ax.add_patch(item)
+
+
+
+def spatial_plot(preds, true_pos, testing_room = None, mode='xy', vmin=None, vmax=None, cmap='PuBu'):
+    errors = pd.DataFrame()
+    errors['xy'] = np.sqrt((preds[:,0] - true_pos[:,0])**2 + (preds[:,1] - true_pos[:,1])**2)
+    errors['xyz'] = np.sqrt((preds[:,0] - true_pos[:,0])**2 + (preds[:,1] - true_pos[:,1])**2 + (preds[:,2] - true_pos[:,2])**2)
+    errors[['x_tag', 'y_tag', 'z_tag']] = true_pos
+    ax = plt.gca()
+    errors.plot.hexbin('x_tag', 'y_tag', mode, gridsize=(35,12), figsize = (17,7), cmap=cmap, vmin=vmin, vmax=vmax, ax=ax)
+    addFurniture(ax, testing_room)
+    ax.set_xlabel('x(m)')
+    ax.set_ylabel('y(m)')
+    ax.set_ylim(43,50.3)
+    ax.set_xlim(43.9,58.2)
+    ax.set_xticklabels(list(range(-2,15,2)))
+    ax.set_yticklabels(list(range(0,8)))
+    ax.text(60.3, 46, 'MEDE (m)', rotation=90)
+    plt.show()
 
 
 
