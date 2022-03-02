@@ -1,4 +1,26 @@
-def iq_processing(data, power_scale=400, epsilon=10**(-8)):
+import pandas as pd
+import numpy as np
+
+from collections import defaultdict
+
+from matplotlib import pyplot as plt
+from matplotlib import colors
+import seaborn as sn
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_error
+
+import random
+import copy
+
+'''rooms = ['testbench_01', 'testbench_01_furniture_low', 'testbench_01_furniture_mid', 'testbench_01_furniture_high']
+concrete_rooms = ['testbench_01_furniture_low_concrete', 'testbench_01_furniture_mid_concrete', 'testbench_01_furniture_high_concrete']
+other_scenarios = ['testbench_01_scenario2', 'testbench_01_scenario3']'''
+anchors = ['anchor1', 'anchor2', 'anchor3', 'anchor4']
+channels = ['37','38','39']
+polarities = ['V','H']
+
+def iq_processing(data):
     
     """
     Input: Data
@@ -25,16 +47,13 @@ def iq_processing(data, power_scale=400, epsilon=10**(-8)):
         out[f'pdda_input_imag_{i}'] = (-iq_values[f'pdda_input_real_{i}']*sin + iq_values[f'pdda_input_imag_{i}']*cos)
         iq_ref +=  iq_values[f'pdda_input_real_{i}']**2 + iq_values[f'pdda_input_imag_{i}']**2
 
-    #out.insert(22, 'power', (out['reference_power'] + out['relative_power'].values)/power_scale)
     power_norm =  StandardScaler().fit_transform((out['reference_power'] + out['relative_power']).values.reshape(-1,1))/10
-    out.insert(22, 'power', power_norm)
     
+    out.insert(22, 'power', power_norm)
     out.insert(21, 'iq_ref', iq_ref)
     out.drop(columns=['pdda_input_imag_1', 'pdda_input_real', 'pdda_input_imag'], inplace=True)
 
     return out
-
-
 
 def lsq(angle_preds, anch_info, iter=None, theta=False, alt=False):
 
@@ -54,17 +73,12 @@ def lsq(angle_preds, anch_info, iter=None, theta=False, alt=False):
         Bs.append(b)
         
     A = np.concatenate(As, axis=1)
-    if alt:
-        B = np.concatenate(Bs)
-    else:
-        B = np.concatenate(Bs, axis=1)
+    B = np.concatenate(Bs) if alt else np.concatenate(Bs, axis=1)
+    preds = [np.linalg.lstsq(a,b,rcond=None)[0] for a,b in zip(A,B)]
 
-    preds = []
-    for a,b in zip(A,B):
-        preds.append(np.linalg.lstsq(a,b,rcond=None)[0])
     if iter:
         for i in range(iter):
-            W = compute_weights(np.array(preds),anch_info,theta)
+            W = compute_weights(np.array(preds),anch_info,theta) 
             preds = []
             for a,b,w in zip(A,B,W):
                 wd = np.zeros((len(a),len(a)))
@@ -73,8 +87,8 @@ def lsq(angle_preds, anch_info, iter=None, theta=False, alt=False):
                 new_a = (a.T)@wd@a
                 new_b = (a.T)@wd@b
                 preds.append(np.linalg.lstsq(new_a,new_b,rcond=None)[0])
-    return preds
 
+    return preds
 
 def lsq_aux(angle_preds, anchor_info, theta = False, alt=False): 
 
@@ -82,23 +96,19 @@ def lsq_aux(angle_preds, anchor_info, theta = False, alt=False):
     Calculates the matrices A,B which are used for least squares position calculation
     Input: Nx2 array containing phi and theta AoA predictions for a specific anchor for N points
     Output: Nx2x3 array containing the equation coefficients for the intersecting planes for each point
-    
+
     Note: Theta can be skipped and the prediction will be in ty xy-plane.
     """
 
     phi = angle_preds[:,0] + anchor_info['az_anchor'].values
-    th = anchor_info['el_anchor'].values + angle_preds[:,1]
-    if not theta:
-        th = anchor_info['el_anchor'].values + np.zeros_like(angle_preds[:,1])
+    th = anchor_info['el_anchor'].values + (angle_preds[:,1] if theta else np.zeros_like(angle_preds[:,1]))
 
     a = np.cos(phi*np.pi/180)*np.cos(th*np.pi/180)
     b = np.sin(phi*np.pi/180)*np.cos(th*np.pi/180)
     c = np.sin(th*np.pi/180)
     
     if alt:
-        Ax = a
-        Ay = b
-        Az = c
+        Ax,Ay,Az = a,b,c
         B = a*anchor_info['x_anchor'].values + b*anchor_info['y_anchor'].values + c*anchor_info['z_anchor'].values
         A = np.concatenate((Ax,Ay,Az)).reshape((3,len(phi))).T
         return A,B
@@ -115,35 +125,35 @@ def lsq_aux(angle_preds, anchor_info, theta = False, alt=False):
 
     return A,B
 
+def compute_weights(pos_preds, anch_info, theta):
+    w = np.zeros((len(pos_preds),4))
+    for i,_ in enumerate(anchors):
+        info = anch_info[anch_info['anchor'] == i+1]
+        w[:,i] = (info['x_anchor'].values - pos_preds[:,0])**2 + (info['y_anchor'].values - pos_preds[:,1])**2
+        if theta:
+            w[:,i] += (info['z_anchor'].values - pos_preds[:,2])**2
+        w[:,i] = 1/(w[:,i])
+    return w
 
-
-def create_set(data, points_set, rooms = None, concrete_rooms = None, other_scenarios = None, 
-               anchors = None, channels = None, polarities = None):
+def create_set(data, points_set):
 
     """
     Input: Data and points for set that we want
     Output: x and y for set that we want
     """
-
     x = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     y = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
 
-    for room in rooms + concrete_rooms + other_scenarios:
+    for room in data:
         for anchor in anchors:
             for channel in channels:
-                util_data = defaultdict()
-                for polarity in polarities:
-                    util_data[polarity] = points_set[['point']].merge(data[room][anchor][channel][polarity], on='point')
-
-                h = util_data['H']
-                v = util_data['V']
+                util_data = {polarity: points_set[['point']].merge(data[room][anchor][channel][polarity], on='point') for polarity in polarities}
+                h,v = util_data['H'], util_data['V']
                 m = h.where(h['relative_power']+h['reference_power'] > v['reference_power']+v['relative_power'], v)
                 x[room][anchor][channel] = iq_processing(m).iloc[:,-10:]
-                y[room][anchor][channel] = util_data[polarity][['true_phi', 'true_theta']]
+                y[room][anchor][channel] = util_data['H'][['true_phi', 'true_theta']]
     
     return x, y
-
-
 
 def create_iq_images(data, augm = False, anchors = None, channels = None):
     
@@ -157,10 +167,7 @@ def create_iq_images(data, augm = False, anchors = None, channels = None):
     for channel in channels:    
         iqs = []
         for anchor in anchors:
-            if augm:
-                dt = data[anchor][channel]
-            else:
-                dt = iq_processing(data[anchor][channel]).iloc[:,-10:]
+            dt = data[anchor][channel] if augm else iq_processing(data[anchor][channel]).iloc[:,-10:]
             powers.append(dt['power'])
             iqs.append(dt)
         chanls.append(pd.concat(iqs, axis=1).values.reshape((-1, 4, 10)))
@@ -169,8 +176,6 @@ def create_iq_images(data, augm = False, anchors = None, channels = None):
     powers = pd.concat(powers, axis=1)
         
     return iq_images, powers
-
-
 
 def create_set_cnn(data, points_set, rooms = None, concrete_rooms = None, other_scenarios = None, anchors = None, channels = None):
 
@@ -182,24 +187,19 @@ def create_set_cnn(data, points_set, rooms = None, concrete_rooms = None, other_
     tmp = defaultdict(lambda: defaultdict(dict))
     x = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     y = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    
     for room in rooms + concrete_rooms + other_scenarios:
         for anchor in anchors:
             for channel in channels:
-                util_data = defaultdict()
-                for polarity in polarities:
-                    util_data[polarity] = points_set[['point']].merge(data[room][anchor][channel][polarity], on='point')
-                h = util_data['H']
-                v = util_data['V']
+                util_data = {polarity: points_set[['point']].merge(data[room][anchor][channel][polarity], on='point') for polarity in polarities}
+                h,v = util_data['H'], util_data['V']
                 tmp[room][anchor][channel] = h.where(h['relative_power']+h['reference_power'] > v['reference_power']+v['relative_power'], v)
             y[room][anchor] = util_data['H'][['true_phi', 'true_theta']]
         x[room]['iq_image'], x[room]['powers'] = create_iq_images(tmp[room], anchors = anchors, channels = channels)
     
     return x,y
-
-
-    
-def decreasing_signal(df, scale_util = 5, mode = 'amplitude', rooms = None, anchors = None, channels = None):
-
+  
+def decreasing_signal(df, rooms, scale_util=5, mode='amplitude'):
     """
     Input: Training dictionary
     Output: Augmented training dictionary
@@ -258,17 +258,14 @@ def decreasing_signal(df, scale_util = 5, mode = 'amplitude', rooms = None, anch
                             polar[f'amplitude_{i}'] = np.sqrt(util[f'pdda_input_real_{i}']**2+util[f'pdda_input_imag_{i}']**2) / scale
                             polar[f'phase_{i}'] = np.arctan2(util[f'pdda_input_imag_{i}'],util[f'pdda_input_real_{i}']) + scale_phase
                     
-
                     for i in range(2,6):
                         out[room][anchor][channel][f'pdda_input_real_{i}'].iloc[index] = polar[f'amplitude_{i}'] * np.cos(polar[f'phase_{i}'])
                         out[room][anchor][channel][f'pdda_input_imag_{i}'].iloc[index] = polar[f'amplitude_{i}'] * np.sin(polar[f'phase_{i}'])                
     
     return out
 
-
-
-def make_predictions(df_x, df_y, model, rooms = None, concrete_rooms = None, test_points = None,
-                     other_scenarios = None, anchors = None, anchor_data = None, cnn = False):
+def make_predictions(df_x, df_y, model, training_rooms, testing_rooms, test_points = None,
+                    anchor_data = None, cnn = False):
 
     """
     Input: x, y
@@ -285,8 +282,8 @@ def make_predictions(df_x, df_y, model, rooms = None, concrete_rooms = None, tes
 
     angle_preds = defaultdict(dict)
     pos_angle_preds = defaultdict(dict)
-    for i,training in enumerate(rooms):
-        for j,testing in enumerate(rooms + concrete_rooms + other_scenarios):
+    for i,training in enumerate(training_rooms):
+        for j,testing in enumerate(testing_rooms):
             pos_preds = {}
             angle_preds[training][testing] = model[training].predict(df_x[testing])
             angle_preds_mae_angles = mean_absolute_error(angle_preds[training][testing], y_test,  multioutput='raw_values')
@@ -308,16 +305,13 @@ def make_predictions(df_x, df_y, model, rooms = None, concrete_rooms = None, tes
     
     return predictions, true_pos
 
-
-
-def posHeatmapXY(maes, pdda_maes = None, figsize=(15,7), scenarios = False):
+def posHeatmapXY(maes, pdda_maes, scenarios=False, figsize=(15,7)):
 
     '''
     Plots a heatmap given the mean euclidean distance errors of the model.
     Input:  A (3,7) numpy array containing the mean euclidean distance errors of the model trained and tested in different room combinations
     Output: Prints the heatmap
     '''
-    
     training_room_names = ['No Furniture', 'Low Furniture', 'Mid Furniture', 'High Furniture']
     testing_room_names = ['No Furniture', 'Low Furniture', 'Mid Furniture', 'High Furniture']
     testing_room_names += ['Low Furniture\nConcrete', 'Mid Furniture\nConcrete', 'High Furniture\nConcrete']
@@ -328,14 +322,14 @@ def posHeatmapXY(maes, pdda_maes = None, figsize=(15,7), scenarios = False):
     fig, ax = plt.subplots(2,1, sharex=True, figsize=figsize, gridspec_kw={'height_ratios': [1,4]})
     cbar_ax = fig.add_axes([.91, .12, .03, .75])
 
-    euclid_pdda = pd.DataFrame(pdda_maes, testing_room_names)
-    euclid_pdda.rename(columns = {0: ''}, inplace = True)
+    euclid_pdda = pd.DataFrame(pdda_maes, testing_room_names).T.loc[:0]
+    euclid_pdda.rename(index = {0: ''}, inplace = True)
     euclid = pd.DataFrame(maes, training_room_names, testing_room_names)
 
-    vmax = np.max(euclid_pdda)
+    vmax = np.max(euclid_pdda.loc[''])
     vmin = np.min(euclid.values)
-    
-    sn.heatmap(euclid_pdda.T, annot=True, annot_kws={"size": 20}, cmap="YlGnBu", cbar_ax = cbar_ax, norm=colors.LogNorm(vmin, vmax), ax=ax[0])
+
+    sn.heatmap(euclid_pdda, annot=True, annot_kws={"size": 20}, cmap="YlGnBu", cbar_ax = cbar_ax, norm=colors.LogNorm(vmin, vmax), ax=ax[0])
     sn.heatmap(euclid, annot=True, annot_kws={"size": 20}, cbar=False, vmax = vmax, vmin = vmin, cmap="YlGnBu", cbar_ax = None, norm=colors.LogNorm(vmin, vmax), ax=ax[1])
 
     ax[0].set_ylabel('PDDA', rotation=0, ha='right')
@@ -350,8 +344,6 @@ def posHeatmapXY(maes, pdda_maes = None, figsize=(15,7), scenarios = False):
     ax[1].set_xticklabels(ax[1].get_xticklabels(), rotation=45, ha='center') 
     
     plt.show()
-
-
 
 def addFurniture(ax, room, anchors=[1,2,3,4]):
     a = np.array([1,1,1,1,1,1])
@@ -379,9 +371,7 @@ def addFurniture(ax, room, anchors=[1,2,3,4]):
     for item in furniture:
         ax.add_patch(item)
 
-
-
-def spatial_plot(preds, true_pos, testing_room = None, mode='xy', vmin=None, vmax=None, cmap='PuBu'):
+def spatial_plot(preds, true_pos, testing_room, mode='xy', vmin=None, vmax=None, cmap='PuBu'):
     errors = pd.DataFrame()
     errors['xy'] = np.sqrt((preds[:,0] - true_pos[:,0])**2 + (preds[:,1] - true_pos[:,1])**2)
     errors['xyz'] = np.sqrt((preds[:,0] - true_pos[:,0])**2 + (preds[:,1] - true_pos[:,1])**2 + (preds[:,2] - true_pos[:,2])**2)
@@ -396,11 +386,51 @@ def spatial_plot(preds, true_pos, testing_room = None, mode='xy', vmin=None, vma
     ax.set_xticklabels(list(range(-2,15,2)))
     ax.set_yticklabels(list(range(0,8)))
     ax.text(60.3, 46, 'MEDE (m)', rotation=90)
+    plt.ylabel('MEDE (m)')
     plt.show()
-
-
 
 def default_to_regular(d):
     if isinstance(d, (defaultdict, dict)):
         d = {k: default_to_regular(v) for k, v in d.items()}
     return d
+
+def generate_pdda_preds(data, points, anchor_data):
+    pdda_specs = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    for room in data:
+        for anchor in anchors:
+            for channel in channels:
+                util_data = {polarity: points[['point']].merge(data[room][anchor][channel][polarity], on='point') for polarity in polarities}
+                h = util_data['H']
+                v = util_data['V']
+                m = h.where(h['relative_power']+h['reference_power'] > v['reference_power']+v['relative_power'], v)
+                pdda_specs[room][anchor][channel] = m.loc[:,['pdda_out_az','pdda_out_el']]
+
+    pdda_angle_preds = defaultdict(dict)
+    pdda_pos_preds = defaultdict()
+    pdda_pos_maes = np.zeros((10,3))
+    pdda_angle_maes = defaultdict(lambda: (np.empty((2,10))))
+    pdda_angle_stds = defaultdict(lambda: (np.empty((2,10))))
+
+    for i,room in enumerate(list(data.keys())):  
+        true_pos = points.iloc[:,1:4].values
+        for anchor in anchors:
+            util_data = {polarity: points[['point']].merge(data[room][anchor][channel][polarity], on='point') for polarity in polarities}
+            true_angles = util_data['H'][['true_phi', 'true_theta']].values
+            pddas_az = np.ones((len(points), 181))
+            pddas_el = np.ones((len(points), 181))
+            for channel in channels:
+                pddas_az *= np.array(np.array(pdda_specs[room][anchor][channel]['pdda_out_az']).tolist())
+                pddas_el *= np.array(np.array(pdda_specs[room][anchor][channel]['pdda_out_el']).tolist())
+            pdda_angle_preds[room][anchor] = np.array(pd.concat((pd.DataFrame(np.argmax(pddas_az, axis = 1) - 90), pd.DataFrame(np.argmax(pddas_el, axis = 1) - 90)), axis = 1))
+            pdda_angle_maes[anchor][:,i] = mean_absolute_error(true_angles, pdda_angle_preds[room][anchor], multioutput='raw_values')
+            pdda_angle_stds[anchor][:,i] = np.std(np.abs(true_angles - pdda_angle_preds[room][anchor]),axis=0)
+        pdda_pos_preds[room] = np.array(lsq(pdda_angle_preds[room], anchor_data[room][anchors[0]]['37']['H']))
+        pdda_pos_maes[i] = np.mean(np.sqrt(np.sum((true_pos[:,:2] - pdda_pos_preds[room][:,:2])**2, axis=1)))
+
+    pdda_results = {'angle_preds': pdda_angle_preds,
+                    'pos_preds': pdda_pos_preds,
+                    'pos_maes': pdda_pos_maes,
+                    'angle_maes': pdda_angle_maes,
+                    'angle_stds': pdda_angle_stds}
+    
+    return pdda_results
