@@ -1,3 +1,4 @@
+from re import X
 import pandas as pd
 import numpy as np
 
@@ -47,7 +48,7 @@ def iq_processing(data):
 
     return out.iloc[:,-10:]
 
-def create_set(data, rooms, points):
+def create_set(data, rooms, points, augmentation=False):
 
     """
     Input: Data and points for set that we want
@@ -64,24 +65,33 @@ def create_set(data, rooms, points):
                 m = h.where(h['relative_power']+h['reference_power'] > v['reference_power']+v['relative_power'], v)
                 x[room][anchor][channel] = iq_processing(m)
                 y[room][anchor][channel] = util_data['H'][['true_phi', 'true_theta']]
-    
+
+    if augmentation:
+        x_reduced = [reduceAmplitude(x, rooms, scale_util=5) for _ in range(30)]
+        x_aug, y_aug = copy.deepcopy(x), copy.deepcopy(y)
+        for room in rooms:
+            for anchor in anchors:
+                for channel in channels:
+                    x_reduced_concat = pd.concat([x_reduced[i][room][anchor][channel] for i in range(30)])
+                    x_aug[room][anchor][channel] = pd.concat([x_aug[room][anchor][channel], x_reduced_concat])
+                    y_reduced_concat = pd.concat([y[room][anchor][channel] for _ in range(30)])
+                    y_aug[room][anchor][channel] = pd.concat([y_aug[room][anchor][channel], y_reduced_concat])
+        x,y = x_aug, y_aug
+
     return x, y
 
-def create_iq_images(data, augm = False, anchors = None, channels = None):
+def create_iq_images(data):
     
     '''
     Preprocess input for CNN model
     '''
 
-    chanls = []
-    powers = []
 
+    powers = [data[anchor][channel]['power'] for channel in channels for anchor in anchors]
+    
+    chanls = []
     for channel in channels:    
-        iqs = []
-        for anchor in anchors:
-            dt = data[anchor][channel] if augm else iq_processing(data[anchor][channel])
-            powers.append(dt['power'])
-            iqs.append(dt)
+        iqs = [data[anchor][channel] for anchor in anchors]
         chanls.append(pd.concat(iqs, axis=1).values.reshape((-1, 4, 10)))
 
     iq_images = np.concatenate(chanls, axis=1).reshape((-1, 3, 4, 10)).transpose(0,3,2,1)
@@ -89,29 +99,46 @@ def create_iq_images(data, augm = False, anchors = None, channels = None):
         
     return iq_images, powers
 
-def create_set_cnn(data, points_set, rooms = None, concrete_rooms = None, other_scenarios = None, anchors = None, channels = None):
+def create_set_cnn(data, rooms, points, augmentation=False):
 
     """
     Input: Data and points for set that we want
     Output: x -> (IQ Image (10x4x3 : IQs + RSSI x anchors x channels)), y
     """
 
-    tmp = defaultdict(lambda: defaultdict(dict))
     x = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     y = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
-    
-    for room in rooms + concrete_rooms + other_scenarios:
+    tmp = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+
+    for room in rooms:
         for anchor in anchors:
             for channel in channels:
-                util_data = {polarity: points_set[['point']].merge(data[room][anchor][channel][polarity], on='point') for polarity in polarities}
+                util_data = {polarity: points[['point']].merge(data[room][anchor][channel][polarity], on='point') for polarity in polarities}
                 h,v = util_data['H'], util_data['V']
-                tmp[room][anchor][channel] = h.where(h['relative_power']+h['reference_power'] > v['reference_power']+v['relative_power'], v)
-            y[room][anchor] = util_data['H'][['true_phi', 'true_theta']]
-        x[room]['iq_image'], x[room]['powers'] = create_iq_images(tmp[room], anchors = anchors, channels = channels)
+                m = h.where(h['relative_power']+h['reference_power'] > v['reference_power']+v['relative_power'], v)
+                tmp[room][anchor][channel] = iq_processing(m)
+                y[room][anchor][channel] = util_data['H'][['true_phi', 'true_theta']]
+        if not augmentation:
+            x[room]['iq_image'], x[room]['powers'] = create_iq_images(tmp[room])
     
-    return x,y
+    if augmentation:
+        
+        x_reduced = [reduceAmplitude(tmp, rooms, scale_util=5) for _ in range(30)]
+        x_aug, y_aug = tmp, copy.deepcopy(y)
+        
+        for room in rooms:
+            for anchor in anchors:
+                for channel in channels:
+                    x_reduced_concat = pd.concat([x_reduced[i][room][anchor][channel] for i in range(30)])
+                    x_aug[room][anchor][channel] = pd.concat([x_aug[room][anchor][channel], x_reduced_concat])
+                    y_reduced_concat = pd.concat([y[room][anchor][channel] for _ in range(30)])
+                    y_aug[room][anchor][channel] = pd.concat([y_aug[room][anchor][channel], y_reduced_concat])
+            x[room]['iq_image'], x[room]['powers'] = create_iq_images(x_aug[room])
+        y = y_aug
+    
+    return x, y
   
-def decreasing_signal(df, rooms, scale_util=5, mode='amplitude'):
+def reduceAmplitude(df, rooms, scale_util=5, mode='amplitude'):
     """
     Input: Training dictionary
     Output: Augmented training dictionary
