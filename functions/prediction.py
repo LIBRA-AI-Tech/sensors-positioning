@@ -131,6 +131,12 @@ def make_predictions(df_x, df_y, model, training_rooms, testing_rooms, test_poin
     return predictions, true_pos
 
 def generate_pdda_preds(data, rooms, points, anchor_data):
+
+    """
+    Input: basic parameters
+    Output: PDDA predictions
+    """
+
     pdda_specs = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     for room in rooms:
         for anchor in anchors:

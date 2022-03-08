@@ -43,6 +43,11 @@ def posHeatmapXY(maes, pdda_maes, figsize=(15,7)):
     plt.show()
 
 def spatial_plot(preds, true_pos, testing_room='testbench_01_furniture_high', mode='xy', vmin=None, vmax=None, cmap='PuBu'):
+
+    """
+    Error per point plot
+    """
+
     errors = pd.DataFrame()
     errors['xy'] = np.sqrt((preds[:,0] - true_pos[:,0])**2 + (preds[:,1] - true_pos[:,1])**2)
     errors['xyz'] = np.sqrt((preds[:,0] - true_pos[:,0])**2 + (preds[:,1] - true_pos[:,1])**2 + (preds[:,2] - true_pos[:,2])**2)
@@ -60,6 +65,11 @@ def spatial_plot(preds, true_pos, testing_room='testbench_01_furniture_high', mo
     plt.show()
 
 def addFurniture(ax, room, anchors=[1,2,3,4]):
+
+    """
+    Adds furniture in spatial plot
+    """
+
     a = np.array([1,1,1,1,1,1])
     a_low = 0.5
     if room in ['testbench_01_furniture_mid', 'testbench_01_furniture_mid_concrete']:
@@ -86,6 +96,11 @@ def addFurniture(ax, room, anchors=[1,2,3,4]):
         ax.add_patch(item)
 
 def plot_rssi(data, room, channel, anchor_i=0, axes=None, pos=None, vmin=None, vmax=None):
+
+    """
+    Spatial visualization for RSSI 
+    """
+
     ax = axes[pos//2,pos%2]
     anchor = 'anchor'+str(anchor_i+1)
     rssi_map = data[room][anchor][channel]['H'].pivot('x_tag', 'y_tag', 'relative_power').values.T[::-1,:]
