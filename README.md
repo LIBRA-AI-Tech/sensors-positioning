@@ -1,5 +1,3 @@
-![](images/python_icon.png) ![](images/jupyter_icon.png) ![](images/tf_icon.png) ![](images/pandas_icon.png)
-
 # Bluetooth Indoor Positioning with DNNs
 
 ## Overview
