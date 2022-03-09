@@ -32,26 +32,26 @@ In each scenario there are 12 different json files - 6 for the data collected fr
 The 6 different files correspond to all the channel-polarization combinations.
 
 Anchor data jsons:
-* anchor : number of anchor
-* x_anchor, y_anchor, z_anchor : anchor's position
-* az_anchor : anchor's horizontal rotation
-* el_anchor : anchor's vertical rotation
-* reference_power : 
+* anchor: anchor's index
+* x_anchor, y_anchor, z_anchor: anchor point's coordinates
+* az_anchor: anchor's horizontal rotation
+* el_anchor: anchor's vertical rotation
+* reference_power: received signal strength (RSS) reference value in dB
 
 Tag data jsons:
-* anchor : number of anchor 
-* point : number of point
-* x_tag, y_tag, z_tag : point's position
-* los : line or no line of sight (1, 0)
-* relative power : 
-* pdda_input_real : real parts of the IQ values
-* pdda_input_image : imaginary parts of the IQ values
-* pdda_phi : pdda prediction for phi angle
-* pdda_theta : pdda prediction for theta angle
-* pdda_out_az : 
-* pdda_out_el : 
-* true_phi : label for phi angle
-* true_theta : label for theta angle
+* anchor: anchor's index
+* point: point's index
+* x_tag, y_tag, z_tag: tag point's coordinates
+* los: point is in line of sight of anchor {0=false,1=true}
+* relative power: RSS value in dB
+* pdda_input_real: in-phase components of the anchor's antennas' measurements
+* pdda_input_image: quadrature-phase components of the anchor's antennas' measurements
+* pdda_phi: pdda prediction for azimuth angle
+* pdda_theta: pdda prediction for elevation angle
+* pdda_out_az: pdda's spatial power spectrum for azimuth angle
+* pdda_out_el: pdda's spatial power spectrum for elevation angle
+* true_phi: actual azimuth angle
+* true_theta:  actual azimuth angle
 
 Further technical information about the data can be found in the dataset description at zenodo.
 
