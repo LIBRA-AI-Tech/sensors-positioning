@@ -8,7 +8,10 @@ https://zenodo.org/record/6303184
 ## Overview
 
 🔬 functions folder contains files with definitions for the 5 machine learning model classes and various functions  used for data processing, model evaluation and visualizations.
+
 🔬 training.ipynb is an example notebook for the machine learing models
+
+
 🔬 training_cnn.ipynb is an example notebook for the cnn model, since it requires some minor tweaks. 
 
 ## Dataset
