@@ -1,20 +1,19 @@
 # Bluetooth Indoor Positioning with DNNs
 
-## Overview
-
-🔭 This repository contains 5 different machine learning approaches that predict a tag's location based on received signals from 4 different anchor points. The models estimate the Angles of Arrival (AoA) for each anchor point and then the estimations are combined with the least squares method to produce the final position prediction.
+🔭 5 different machine learning approaches were designed and implemented to perform indoor positioning using bluetooth signals collected by 4 different anchor points. A tag transmitts a signal which, upon arrival to the anchor points, is fed to the developed models in order to estimate the angles of arrival to each anchor point. Finally, the angle of arrival estimations are fed to a positioning algorithm that utilizes the least squares method to produce a position estimate.
 
 🔗 The dataset on which the machine learning models were trained and evaluated can be found here:
 https://zenodo.org/record/6303184
 
-🔬 functions contains the 5 machine learning models and functions that are used in the notebooks
+## Overview
 
-🔬 training is an example notebook for the machine learing models
-🔬 training_cnn is an example notebook for the cnn model, since it requires some minor tweaks. 
+🔬 functions folder contains files with definitions for the 5 machine learning model classes and various functions  used for data processing, model evaluation and visualizations.
+🔬 training.ipynb is an example notebook for the machine learing models
+🔬 training_cnn.ipynb is an example notebook for the cnn model, since it requires some minor tweaks. 
 
 ## Dataset
 
-The dataset consists of 9 different directories. Each directory contains the data of one particular scenario of the 14 x 7m room.
+The data used was generated via ray-tracing simulations in an environment of dimensions 14m x 7m. Multiple setups were examined with varying parameters that affect indoor positioning tasks. The different room setups are presented.
 
 Room Setup                              | Description
 -------------                           | -------------
@@ -25,8 +24,8 @@ testbench_01_furniture_high             | Six line-of-sight blocking furniture
 testbench_01_furniture_low_concrete     | Same as low but with concrete furniture
 testbench_01_furniture_mid_concrete     | Same as mid but with concrete furniture
 testbench_01_furniture_high_concrete    | Same as high but with concrete furniture
-testbench_01_rotated_anchors            | Same as testbench_01 but the anchors have been rotated clockwise 5 degrees
-testbench_01_translated_anchors         | Same as testbench_01 but the anchors have been translated 10cm degrees
+testbench_01_rotated_anchors            | Same as testbench_01 but the anchors have been rotated clockwise by 5 degrees
+testbench_01_translated_anchors         | Same as testbench_01 but the anchors have been translated by 10cm
 
 In each scenario there are 12 different json files - 6 for the data collected from the anchors and 6 for the anchor properties. 
 The 6 different files correspond to all the channel-polarization combinations.
