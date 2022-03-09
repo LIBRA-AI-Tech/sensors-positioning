@@ -64,7 +64,7 @@ Only 140 tag locations were used for training, each being more than 1m apart fro
 
 ### Model Complexity
 
-All models were tuned to have approximately 20k parameters so that the conducted experiments and comparisons were done on common grounds. Lower complexities were examined to  determine the effect they had on performance:Lower complexities can be tried as well.
+All models were tuned to have approximately 20k parameters so that the conducted experiments and comparisons were done on common grounds. Lower complexities were examined to  determine the effect they had on performance.
 
 
 ![](images/complexities.png)
